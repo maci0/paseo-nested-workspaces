@@ -5,6 +5,7 @@
  * reads each project's directory from its row test id and sets `order`,
  * `padding-left` and `display` on the section. Nodes are never moved, so
  * React keeps owning the list. An unrecognized structure is left untouched.
+ * A scoped stylesheet tightens the list's vertical spacing.
  */
 import { Platform } from "react-native";
 import { nest } from "./tree";
@@ -12,8 +13,27 @@ import { nest } from "./tree";
 const LIST_SELECTOR = '[data-testid="sidebar-project-workspace-list-scroll"]';
 const ROW_TEST_ID_PREFIX = "sidebar-project-row-";
 const HOST_KEY_PREFIX = "host:";
+const WORKSPACE_ROW_TEST_ID_PREFIX = "sidebar-workspace-row-";
 const SECTION_SELECTOR = '[role="group"]';
 const INDENT_PX = 12;
+// Paseo's own values are 36, 8 and 12 (plus 4 and 2 of row margin, dropped here).
+const ROW_MIN_HEIGHT_PX = 28;
+const ROW_PADDING_Y_PX = 4;
+const SECTION_GAP_PX = 2;
+
+const rows = [ROW_TEST_ID_PREFIX, WORKSPACE_ROW_TEST_ID_PREFIX]
+  .map((prefix) => `${LIST_SELECTOR} [data-testid^="${prefix}"]`)
+  .join(", ");
+// ponytail: one density for pointer and touch; split by layout if 28px rows prove too small to tap.
+const COMPACT_CSS = `
+${rows} {
+  min-height: ${ROW_MIN_HEIGHT_PX}px !important;
+  padding-top: ${ROW_PADDING_Y_PX}px !important;
+  padding-bottom: ${ROW_PADDING_Y_PX}px !important;
+  margin-bottom: 0 !important;
+}
+${LIST_SELECTOR} ${SECTION_SELECTOR} { padding-bottom: ${SECTION_GAP_PX}px !important; }
+`;
 
 // The DOM members this module uses; the project compiles without the DOM lib.
 interface SectionStyle {
@@ -35,7 +55,17 @@ interface DomMutationObserver {
   observe(target: DomElement, options: { childList: boolean; subtree: boolean }): void;
   disconnect(): void;
 }
-declare const document: (DomElement & { readonly body: DomElement }) | undefined;
+interface DomStyleElement {
+  textContent: string | null;
+  remove(): void;
+}
+declare const document:
+  | (DomElement & {
+      readonly body: DomElement;
+      readonly head: { appendChild(node: DomStyleElement): unknown };
+      createElement(tag: "style"): DomStyleElement;
+    })
+  | undefined;
 declare const MutationObserver: new (
   callback: (records: readonly { readonly target: unknown }[]) => void,
 ) => DomMutationObserver;
@@ -88,6 +118,9 @@ export function nestSidebarProjects(): () => void {
   const styled = new Set<DomElement>();
   let list: DomElement | null = null;
   let frame: number | undefined;
+  const compact = page.createElement("style");
+  compact.textContent = COMPACT_CSS;
+  page.head.appendChild(compact);
 
   const apply = (): void => {
     frame = undefined;
@@ -122,6 +155,7 @@ export function nestSidebarProjects(): () => void {
 
   return () => {
     observer.disconnect();
+    compact.remove();
     if (frame !== undefined) cancelAnimationFrame(frame);
     for (const element of styled) setStyle(element, UNSTYLED);
     styled.clear();
