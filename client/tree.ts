@@ -1,18 +1,20 @@
 /**
- * Nest workspaces by directory containment, the way the DeepSeek harness
- * workspace browser does: a workspace sits under the nearest other workspace
- * whose directory contains its own. Pure; the screen renders the result.
+ * Nest entries by directory containment, the way the DeepSeek harness
+ * "Workspace Tree" does: an entry sits under the nearest other entry whose
+ * directory contains its own. Pure; `web.ts` applies the result to the sidebar.
  */
 
-export interface TreeInput {
-  id: string;
+export interface NestInput {
+  /** Absolute directory in the host's spelling. */
   directory: string;
+  /** Entries nest only under entries with the same scope (the host). */
+  scope: string;
 }
 
-export interface TreeNode<T extends TreeInput> {
+export interface Nested<T> {
   item: T;
   depth: number;
-  children: TreeNode<T>[];
+  parent: T | undefined;
 }
 
 /** Normalize separators for comparison; a POSIX backslash is not a separator. */
@@ -36,33 +38,32 @@ export function owningParent(path: string, parents: readonly string[]): string |
   return owner;
 }
 
-const byName = new Intl.Collator(undefined, { sensitivity: "base", numeric: true });
-
 /**
- * Build the forest. Siblings sort by `label`, then id.
+ * Depth-first order with each entry after its parent. Siblings keep their
+ * input order. Entries sharing one directory are siblings; the first of them
+ * is the parent of that directory's children.
  */
-export function buildTree<T extends TreeInput>(
-  items: readonly T[],
-  label: (item: T) => string,
-): TreeNode<T>[] {
-  const directories = [...new Set(items.map((item) => folderPath(item.directory)))];
-  const childrenOf = new Map<string | undefined, T[]>();
+export function nest<T extends NestInput>(items: readonly T[]): Nested<T>[] {
+  const scopes = new Map<string, Map<string, T>>();
   for (const item of items) {
-    const parent = owningParent(item.directory, directories);
+    const owners = scopes.get(item.scope) ?? new Map<string, T>();
+    const directory = folderPath(item.directory);
+    if (!owners.has(directory)) owners.set(directory, item);
+    scopes.set(item.scope, owners);
+  }
+  const childrenOf = new Map<T | undefined, T[]>();
+  for (const item of items) {
+    const owners = scopes.get(item.scope) ?? new Map<string, T>();
+    const owner = owningParent(item.directory, [...owners.keys()]);
+    const parent = owner === undefined ? undefined : owners.get(owner);
     const siblings = childrenOf.get(parent) ?? [];
     siblings.push(item);
     childrenOf.set(parent, siblings);
   }
-  // Workspaces on one directory are siblings; the first of them carries that directory's children.
-  const expanded = new Set<string>();
-  const build = (parent: string | undefined, depth: number): TreeNode<T>[] =>
-    (childrenOf.get(parent) ?? [])
-      .sort((a, b) => byName.compare(label(a), label(b)) || byName.compare(a.id, b.id))
-      .map((item) => {
-        const directory = folderPath(item.directory);
-        const children = expanded.has(directory) ? [] : build(directory, depth + 1);
-        expanded.add(directory);
-        return { item, depth, children };
-      });
-  return build(undefined, 0);
+  const walk = (parent: T | undefined, depth: number): Nested<T>[] =>
+    (childrenOf.get(parent) ?? []).flatMap((item) => [
+      { item, depth, parent },
+      ...walk(item, depth + 1),
+    ]);
+  return walk(undefined, 0);
 }

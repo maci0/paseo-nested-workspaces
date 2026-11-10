@@ -1,7 +1,7 @@
 # Nested workspaces
 
-Shows your workspaces as a tree, nested by directory, the way the DeepSeek harness workspace browser does. A workspace whose directory sits inside another workspace's directory appears under that workspace, at any depth. Workspaces on the same directory are siblings.
+Nests the sidebar's workspace list by directory, like the "Workspace Tree" view of the DeepSeek harness. A project whose directory sits inside another project's directory is shown under that project, indented one level per step, together with its workspaces. Open `~/app` and `~/app/api` as two projects and `api` appears under `app`.
 
-A sidebar row opens the tree as a screen. Each row shows the workspace name and, under it, its title. Press a row to open the workspace; press the chevron to fold or unfold its children. The list follows workspace creation, renaming and archiving live.
+Nothing is added to the sidebar. The built-in list is rearranged in place, so rows keep their menus, status indicators and shortcuts. Folding a project also hides the projects nested under it. Only projects that are directories on a host are nested, and projects on different hosts never nest under each other.
 
-Works on desktop, web and mobile with Paseo 0.15.3 or later. The plugin runs only in the app and reads nothing beyond the selected host's workspace list. Folding is kept for the current app session only. Workspaces whose directory contains no other workspace show no chevron.
+Works in the desktop app and the web app on Paseo 0.15.3 or later. On iOS and Android the plugin does nothing. Paseo has no released API for changing the built-in list, so the plugin restyles the list's elements directly and may need an update when Paseo changes the sidebar. Nested projects come after their parent's own workspaces. Reordering projects by dragging is untested with nesting on. The plugin runs only in the app, stores nothing and sends nothing.

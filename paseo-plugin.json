@@ -1,7 +1,10 @@
 {
   "id": "nested-workspaces",
   "name": "Nested workspaces",
-  "description": "Workspaces as a directory tree, nested like the DeepSeek harness workspace browser",
+  "description": "Nests the sidebar workspace list by directory, like the DeepSeek harness Workspace Tree",
+  "media": [
+    "assets/screenshot.png"
+  ],
   "requirements": {
     "paseo": ">=0.15.3"
   }
