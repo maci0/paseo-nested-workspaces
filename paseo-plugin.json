@@ -1,0 +1,8 @@
+{
+  "id": "nested-workspaces",
+  "name": "Nested workspaces",
+  "description": "Workspaces as a directory tree, nested like the DeepSeek harness workspace browser",
+  "requirements": {
+    "paseo": ">=0.15.3"
+  }
+}
