@@ -2,17 +2,17 @@
  * Web and desktop only: nests the sidebar's project sections in place.
  *
  * Released Paseo has no API to change the built-in workspace list, so this
- * reads each project's directory from its row test id and sets `order`,
+ * matches each project row's test id to the host's project list and sets `order`,
  * `padding-left` and `display` on the section. Nodes are never moved, so
  * React keeps owning the list. An unrecognized structure is left untouched.
  * A scoped stylesheet tightens the list's vertical spacing.
  */
 import { Platform } from "react-native";
+import { listScope, locateProject } from "./project-key";
 import { nest } from "./tree";
 
 const LIST_SELECTOR = '[data-testid="sidebar-project-workspace-list-scroll"]';
 const ROW_TEST_ID_PREFIX = "sidebar-project-row-";
-const HOST_KEY_PREFIX = "host:";
 const WORKSPACE_ROW_TEST_ID_PREFIX = "sidebar-workspace-row-";
 const SECTION_SELECTOR = '[role="group"]';
 const INDENT_PX = 12;
@@ -70,34 +70,40 @@ declare const MutationObserver: new (
   callback: (records: readonly { readonly target: unknown }[]) => void,
 ) => DomMutationObserver;
 
+/** One project of the host's project list: its sidebar key and root directory. */
+export interface ListedProject {
+  key: string;
+  directory: string;
+}
+
 interface Section {
   /** Flex item of the project list; carries the styles. */
   element: DomElement;
   /** Holds the project row and, while unfolded, its workspace rows. */
   group: DomElement;
+  /** Sidebar project key, the row test id without its prefix. */
+  key: string;
+  /** False when the key has no known directory; such a project stays at the top level. */
+  located: boolean;
   directory: string;
   scope: string;
 }
 
-/** `sidebar-project-row-host:<serverId>:<absolute directory>`; other project keys do not nest. */
-function parseRow(testId: string, index: number): Pick<Section, "directory" | "scope"> {
-  const alone = { directory: "", scope: `unnested:${index}` };
-  const key = testId.slice(ROW_TEST_ID_PREFIX.length);
-  if (!key.startsWith(HOST_KEY_PREFIX)) return alone;
-  const rest = key.slice(HOST_KEY_PREFIX.length);
-  const cut = rest.indexOf(":");
-  const directory = rest.slice(cut + 1);
-  const absolute = directory.startsWith("/") || /^[A-Za-z]:[/\\]/.test(directory) || directory.startsWith("\\\\");
-  return cut > 0 && absolute ? { directory, scope: rest.slice(0, cut) } : alone;
-}
-
-function readSections(list: DomElement): Section[] {
+function readSections(list: DomElement, locate: (key: string) => { directory: string; scope: string } | undefined): Section[] {
   const sections: Section[] = [];
   for (const row of list.querySelectorAll(`[data-testid^="${ROW_TEST_ID_PREFIX}"]`)) {
     const group = row.closest(SECTION_SELECTOR);
     const element = group?.parentElement;
     if (!group || !element?.parentElement) return [];
-    sections.push({ element, group, ...parseRow(row.getAttribute("data-testid") ?? "", sections.length) });
+    const key = (row.getAttribute("data-testid") ?? "").slice(ROW_TEST_ID_PREFIX.length);
+    const location = locate(key);
+    sections.push({
+      element,
+      group,
+      key,
+      located: location !== undefined,
+      ...(location ?? { directory: "", scope: `unnested:${sections.length}` }),
+    });
   }
   const container = sections[0]?.element.parentElement;
   return sections.every((section) => section.element.parentElement === container) ? sections : [];
@@ -111,11 +117,21 @@ function setStyle(element: DomElement, next: SectionStyle): void {
 
 const UNSTYLED: SectionStyle = { order: "", paddingLeft: "", display: "" };
 
-/** Start nesting the sidebar project list. Returns the cleanup that restores it. */
-export function nestSidebarProjects(): () => void {
+/**
+ * Start nesting the sidebar project list. `listProjects` reads the host's
+ * project list; it is called once at start and again when a row appears whose
+ * key the last result did not hold. Returns the cleanup that restores the list.
+ */
+export function nestSidebarProjects(listProjects: () => Promise<ListedProject[]>): () => void {
   if (Platform.OS !== "web" || typeof document === "undefined") return () => {};
   const page = document;
   const styled = new Set<DomElement>();
+  const directories = new Map<string, string>();
+  // Keys already looked up; one missing from the list is not asked for again.
+  const asked = new Set<string>();
+  let scope = listScope([]);
+  let loading = false;
+  let stopped = false;
   let list: DomElement | null = null;
   let frame: number | undefined;
   const compact = page.createElement("style");
@@ -127,7 +143,10 @@ export function nestSidebarProjects(): () => void {
     list = page.querySelector(LIST_SELECTOR);
     const current = new Set<DomElement>();
     const folded = new Set<Section>();
-    nest(list ? readSections(list) : []).forEach(({ item, depth, parent }, index) => {
+    const sections = list ? readSections(list, (key) => locateProject(key, directories, scope)) : [];
+    const unknown = sections.filter((section) => !section.located && !asked.has(section.key));
+    if (unknown.length > 0 && !loading) load(unknown.map((section) => section.key));
+    nest(sections).forEach(({ item, depth, parent }, index) => {
       // A folded project keeps only its row; its nested projects fold with it.
       const hidden = parent !== undefined && (folded.has(parent) || parent.group.children.length < 2);
       if (hidden) folded.add(item);
@@ -143,6 +162,26 @@ export function nestSidebarProjects(): () => void {
     for (const element of current) styled.add(element);
   };
 
+  const load = (keys: readonly string[]): void => {
+    loading = true;
+    for (const key of keys) asked.add(key);
+    void listProjects()
+      .then((projects) => {
+        directories.clear();
+        for (const project of projects) directories.set(project.key, project.directory);
+        scope = listScope(directories.keys());
+        loading = false;
+        if (!stopped && frame === undefined) frame = requestAnimationFrame(apply);
+        return undefined;
+      })
+      .catch((error: unknown) => {
+        // No re-apply here: the next change to the list retries these keys, a failing host is not polled.
+        loading = false;
+        for (const key of keys) asked.delete(key);
+        console.error("nested-workspaces: reading the project list failed", error);
+      });
+  };
+
   const observer = new MutationObserver((records) => {
     if (frame !== undefined) return;
     // Ignore the rest of the app (streaming chat) while the list is mounted.
@@ -151,9 +190,11 @@ export function nestSidebarProjects(): () => void {
     frame = requestAnimationFrame(apply);
   });
   observer.observe(page.body, { childList: true, subtree: true });
+  load([]);
   apply();
 
   return () => {
+    stopped = true;
     observer.disconnect();
     compact.remove();
     if (frame !== undefined) cancelAnimationFrame(frame);
